@@ -1,0 +1,173 @@
+---
+title: "Data Wrangling and Visualization"
+author: "Xi Li"
+output: pdf_document
+---
+
+```{r,include=F}
+#knitr::opts_chunk$set(warning = F,error=F,message=F)
+require(tidyverse)
+#install.packages("dplyr")
+require(dplyr)
+```
+
+
+
+
+1. Read in and combine all 24 `.csv` into a single data frame in `R` (using a `for()` loop). 
+```{r}
+#setwd("~/Desktop/AcceleratedStats2/hm1_to_class")
+a = list.files("./Data/English-Towns")  # store all file names in this variable
+dir = paste("./Data/English-Towns/",a,sep="")
+n = length(dir)       
+merge.data = read.csv(dir[1])  # read in the first csv
+```
+
+```{r}
+# read in the rest 23 of csv files
+ for (i in 2:n){
+   new.data = read.csv(file = dir[i], header=T, sep=",")
+   merge.data = rbind(merge.data,new.data)
+ }
+```
+
+2. Drop the variable `Status`.
+3. Change the variable name Ceremonial county to County
+4. Order the data by County
+5. Export the data as a .csv to the Output/ folder. Title the file “english-town-dictionary.csv”
+```{r}
+merge.data %>%
+  select(-Status) %>%
+  # Change the variable name `Ceremonial county` to `County` 
+  rename(County=Ceremonial.county) %>%
+  # Order the data by `County`
+  arrange(County) %>%
+  # Save data to the original dataframe
+  {. ->> merge.data  } %>%
+  # Export the data
+  write.csv(.,file = "./Output/english-town-dictionary.csv",row.names=F)
+  
+```
+
+
+1. Only countries are in the data; no regions or non-state entities
+2. Drop all variables but the `iso3c`,`date`,`value`, `indicatorID`, and `country`.
+3. Spread `indicatorID` into two new variables ("SP.POP.TOTL","NY.GDP.MKTP.CD") where the values correspond with the entries in the `value` variable column. 
+4. Rename `iso3c` to `ccode`, `date` to `year`, `SP.POP.TOTL` to `pop`, and `NY.GDP.MKTP.CD` to `gdp`.
+5. Rearrange the columns in the following order: `country`, `ccode`, `year`, `gdp`, `pop`
+```{r}
+#install.packages("wbstats")
+library(wbstats)
+# trying to figure out how it works
+#?wbstats
+#browseVignettes(package = "wbstats")
+```
+
+```{r,cache=TRUE}
+# pull data and filter
+pop_data <-wb(country="countries_only",indicator=c("SP.POP.TOTL","NY.GDP.MKTP.CD"), startdate = 2000, enddate = 2005)
+head(pop_data)
+```
+
+```{r}
+pop_data %>% 
+  # drop useless variables
+  select(-indicator,-iso2c) %>% 
+  # spread `indicatorID` into two new variables
+  spread(indicatorID,value) %>% 
+  # rename
+  rename(ccode=iso3c,year=date,pop=SP.POP.TOTL,gdp=NY.GDP.MKTP.CD) %>% 
+  # rearrange the columns
+  select(country,ccode,year,gdp,pop) %>% 
+  # save data using popline
+  {. ->> pop_data  } 
+#pop_data 
+```
+
+6. Count to see if you have any missing for `gdp` entries; if there are any missing entries, create a new variable called `missing_gdp` that takes on the value of `1` if missing, `0` otherwise. How many country-year values are missing? Which country has the most missing values?
+  - tip: look at the `ifelse()` and `is.na()` functions for ideas regarding how to do this.
+  
+  3038 country-year values are missing. British Virgin Islands has the most missing values.
+```{r}
+pop_data$missing_gdp <- ifelse(is.na(pop_data$gdp)==1,1,0)
+sum(is.na(pop_data$gdp)) # the number of country-year values that are missing
+
+pop_data %>%
+  group_by(country) %>%
+  summarise(sum(missing_gdp)) %>%
+  arrange(desc(`sum(missing_gdp)`)) # arrange in descending order
+
+```
+  
+7. Transform `pop` and `gdp` using the natural `log()`. Name the new variables `ln_gdp` and `ln_pop`.
+```{r}
+pop_data$ln_gdp <- log(pop_data$gdp)
+pop_data$ln_pop <- log(pop_data$pop)
+#pop_data
+```
+
+8. Export the data as a `.dta` and `.csv` into the `Output/` folder. Name the data `wb-pop-gdp-2000-2005`.
+```{r}
+write.csv(pop_data,file = "./Output/wb-pop-gdp-2000-2005.csv",row.names=F)
+library(foreign)
+write.dta(pop_data,file = "./Output/wb-pop-gdp-2000-2005.dta")
+```
+
+
+### (1) Use ggplot2 to create a tile plot to demonstrate the portion and location of missing data.
+
+```{r}
+# select a part of the data
+data <- pop_data[grep("^A",pop_data$country),]
+data <- data[as.numeric(data$year)>=2000&as.numeric(data$year)<=2005,]
+# convert missing_gpd variable to factor
+data$missing_gdp <- as.factor(data$missing_gdp)
+```
+
+```{r}
+plot1<- ggplot(data=data,aes(x=year,y=country))+
+  geom_tile(aes(fill=missing_gdp))+
+  theme_minimal()+
+  labs(title="Missing GDP Data",
+       subtitle = "A visual exploration of data missing GDP in the World Bank sample (2000-2005)",
+       caption = "Only country names starting with the letter 'A' included in the figure.",
+       x = "Years",
+       y = "",
+       labels = "Missing")+
+  scale_fill_manual(values = c("grey30","Orange"),labels= c("Available","Missing"))+
+  theme(legend.position = "top")+
+  guides(fill=guide_legend(title="Missing"))
+
+plot1
+```
+
+```{r}
+# save the plot
+ggsave(plot = plot1,filename = "plot1.pdf",
+       device = "pdf",width=10,height = 5,path ="./Output")
+```
+
+### (2) Generate a scatter plot to present the relationship between GDP and influencing factors.
+
+  
+```{r}
+data2<- pop_data[as.numeric(pop_data$year)==2000,]
+plot2 <- ggplot(data2,aes(x=ln_pop,y=ln_gdp,size = ln_pop))+ # map a continuous variable to size
+  geom_point(color = "forestgreen",alpha= 0.5)+
+  theme_light()+
+  labs(title="Relationship between population and economic development",
+       subtitle = "World bank data for the year 2000 reported",
+       x = "Log Population",
+       y = "Log GDP",
+       labels = "Missing")+
+  guides(size=FALSE) # drop the legend
+  
+plot2
+```
+```{r}
+# save the plot
+ggsave(plot = plot2,filename = "plot2.png",
+       device = "png",width=10,height = 5,dpi = 600,path ="./Output")
+```
+
+
